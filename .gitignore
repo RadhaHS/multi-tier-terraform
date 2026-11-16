@@ -1,4 +1,9 @@
-echo ".terraform/
-terraform.tfstate
-terraform.tfstate.backup
-.terraform.lock.hcl" > .gitignore
+# Terraform local state and working directory (state can contain sensitive values)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+*.tfvars.json
+
+# NOTE: .terraform.lock.hcl is intentionally NOT ignored - commit it to pin provider versions

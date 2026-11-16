@@ -7,7 +7,18 @@ resource "aws_launch_template" "app" {
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
-    echo "<html><body><h1>Multi-Tier Architecture</h1><p>Served from $(hostname) in $(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)</p></body></html>" > /tmp/index.html
+    # IMDSv2: fetch a session token before reading instance metadata
+    TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+    AZ=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+
+    # Data-tier check: can this app server open a TCP connection to MySQL on port 3306?
+    if timeout 3 bash -c "</dev/tcp/${aws_db_instance.main.address}/3306"; then
+      DB_STATUS="reachable"
+    else
+      DB_STATUS="NOT reachable"
+    fi
+
+    echo "<html><body><h1>Multi-Tier Architecture</h1><p>Served from $(hostname) in $AZ</p><p>MySQL data tier: $DB_STATUS</p></body></html>" > /tmp/index.html
     cd /tmp && python3 -m http.server 80 &
   EOF
   )
@@ -31,6 +42,7 @@ data "aws_ami" "amazon_linux" {
     values = ["hvm"]
   }
 }
+
 resource "aws_autoscaling_group" "app" {
   name                = "${var.project_name}-app-asg"
   desired_capacity    = 2
@@ -42,6 +54,14 @@ resource "aws_autoscaling_group" "app" {
   launch_template {
     id      = aws_launch_template.app.id
     version = "$Latest"
+  }
+
+  # Replace instances automatically when the launch template changes
+  instance_refresh {
+    strategy = "Rolling"
+    preferences {
+      min_healthy_percentage = 50
+    }
   }
 
   tag {
